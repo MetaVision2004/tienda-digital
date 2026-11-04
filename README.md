@@ -10,6 +10,8 @@ Tienda digital construida con Next.js App Router, TypeScript y Supabase. Usa el 
 4. Genera un secreto de pedidos de al menos 32 caracteres, por ejemplo con `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`, y colócalo en `ORDER_ACCESS_SECRET`.
 5. Ejecuta `npm run dev` y abre `http://localhost:3000`.
 
+Antes de conectar el catálogo, ejecuta `supabase/migrations/20261103000000_add_product_catalog_metadata.sql` en el SQL Editor del proyecto Supabase. La migración agrega `image_url`, `slug`, `compare_at_price`, `is_featured` e `is_new`, genera slugs únicos por empresa para los productos existentes y deja las imágenes y ofertas sin valores inventados. El UUID de empresa compartido para `STORE_COMPANY_ID` ya está precargado en `.env.example`.
+
 Sin variables de Supabase, la tienda muestra productos de muestra y desactiva el checkout. Cuando las variables estén completas, lee el catálogo real de la compañía seleccionada.
 
 ## Acceso inicial del equipo
@@ -33,6 +35,7 @@ Luego entra por `/admin/login`. `admin` y `seller` pueden editar productos; `adm
 - El enlace de seguimiento contiene un token firmado, no requiere políticas RLS públicas y vence a los 90 días.
 - El equipo confirma el pago manualmente y puede marcar el pedido como entregado. En ese momento se habilita la descarga por 30 días y se pueden guardar claves de licencia.
 - Los archivos se suben al bucket privado desde el panel. `products.file_url` guarda la ruta del objeto, por ejemplo `COMPANY_UUID/archivo.pdf`; también se permiten URLs HTTPS externas.
+- Las portadas usan `products.image_url` (HTTPS), los enlaces amigables usan `products.slug` (`/producto/<slug>`), `compare_at_price` debe superar `price`, e `is_featured` / `is_new` controlan las insignias y el orden del catálogo.
 
 ## Configuración y seguridad
 

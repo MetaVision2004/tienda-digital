@@ -10,7 +10,7 @@ import { saveProduct, signOut, updateOrder } from "./actions";
 
 const statuses = ["pending", "paid", "delivered", "cancelled", "refunded"] as const;
 const statusLabels: Record<string, string> = { pending: "Pendiente", paid: "Pagado", delivered: "Entregado", cancelled: "Cancelado", refunded: "Reembolsado" };
-const notices: Record<string, string> = { "product-saved": "Producto guardado.", "order-updated": "Pedido actualizado.", "invalid-product": "Revisa los datos del producto.", "invalid-order": "No se pudo validar el pedido.", "order-not-found": "No se encontró el pedido de esta empresa.", "save-failed": "No se pudieron guardar los cambios." };
+const notices: Record<string, string> = { "product-saved": "Producto guardado.", "order-updated": "Pedido actualizado.", "invalid-product": "Revisa los datos del producto.", "invalid-order": "No se pudo validar el pedido.", "order-not-found": "No se encontró el pedido de esta empresa.", "slug-taken": "Ese slug ya está asignado a otro producto de la empresa.", "save-failed": "No se pudieron guardar los cambios." };
 
 async function AdminContent({ searchParams }: PageProps<"/admin">) {
   await connection();
@@ -19,7 +19,7 @@ async function AdminContent({ searchParams }: PageProps<"/admin">) {
   const admin = createAdminClient();
   const [categoryResult, productResult, customerResult] = await Promise.all([
     admin.from("categories").select("id,name").order("name"),
-    admin.from("products").select("id,category_id,name,description,price,product_type,file_url,is_active,created_at").eq("company_id", staff.companyId).order("created_at", { ascending: false }),
+    admin.from("products").select("id,category_id,slug,name,description,price,compare_at_price,image_url,is_featured,is_new,product_type,file_url,is_active,created_at").eq("company_id", staff.companyId).order("created_at", { ascending: false }),
     admin.from("customers").select("id,full_name,email").eq("company_id", staff.companyId),
   ]);
   const customers = customerResult.data ?? [];
@@ -57,8 +57,43 @@ async function AdminContent({ searchParams }: PageProps<"/admin">) {
 
       <section className="admin-section"><div className="admin-section-heading"><div><span className="eyebrow">Colección</span><h2>Productos</h2></div><span className="admin-count"><Layers3 size={14} /> {(productResult.data ?? []).length}</span></div>
         {canManageProducts ? <>
-          <form className="product-editor new-product" action={saveProduct}><div className="editor-heading"><PackagePlus size={17} /><strong>Agregar un producto</strong></div><div className="editor-fields"><label className="form-control">Nombre<input name="name" required maxLength={120} /></label><label className="form-control">Precio<input name="price" type="number" min="0" step="0.01" required /></label><label className="form-control">Categoría<select name="category_id"><option value="">Sin categoría</option>{(categoryResult.data ?? []).map((category) => <option key={category.id} value={category.id}>{categoryLabel(category.name)}</option>)}</select></label><label className="form-control">Tipo<select name="product_type"><option value="download">Descarga</option><option value="license">Licencia</option><option value="course">Curso</option><option value="subscription">Suscripción</option></select></label><label className="form-control editor-wide">Descripción<textarea name="description" maxLength={2000} rows={2} /></label><label className="form-control editor-wide">Archivo digital<ProductFileInput /></label><label className="check-control"><input type="checkbox" name="is_active" defaultChecked /> Publicar en tienda</label></div><button className="button-primary" type="submit">Crear producto <PackagePlus size={15} /></button></form>
-          <div className="managed-products">{(productResult.data ?? []).map((product) => <form className="product-editor" action={saveProduct} key={product.id}><input type="hidden" name="id" value={product.id} /><div className="editor-heading"><strong>{product.name}</strong><span className={product.is_active ? "active-label" : "inactive-label"}>{product.is_active ? "Publicado" : "Oculto"}</span></div><div className="editor-fields"><label className="form-control">Nombre<input name="name" defaultValue={product.name} required maxLength={120} /></label><label className="form-control">Precio<input name="price" type="number" min="0" step="0.01" defaultValue={product.price} required /></label><label className="form-control">Categoría<select name="category_id" defaultValue={product.category_id ?? ""}><option value="">Sin categoría</option>{(categoryResult.data ?? []).map((category) => <option key={category.id} value={category.id}>{categoryLabel(category.name)}</option>)}</select></label><label className="form-control">Tipo<select name="product_type" defaultValue={product.product_type}><option value="download">Descarga</option><option value="license">Licencia</option><option value="course">Curso</option><option value="subscription">Suscripción</option></select></label><label className="form-control editor-wide">Descripción<textarea name="description" defaultValue={product.description ?? ""} maxLength={2000} rows={2} /></label><label className="form-control editor-wide">Archivo digital<ProductFileInput defaultValue={product.file_url ?? ""} /></label><label className="check-control"><input type="checkbox" name="is_active" defaultChecked={product.is_active} /> Publicar en tienda</label></div><button className="button-quiet" type="submit">Guardar cambios</button></form>)}</div>
+          <form className="product-editor new-product" action={saveProduct}>
+            <div className="editor-heading"><PackagePlus size={17} /><strong>Agregar un producto</strong></div>
+            <div className="editor-fields">
+              <label className="form-control">Nombre<input name="name" required maxLength={120} /></label>
+              <label className="form-control">Slug<input name="slug" placeholder="se-genera-desde-el-nombre" maxLength={160} /></label>
+              <label className="form-control">Precio actual<input name="price" type="number" min="0" step="0.01" required /></label>
+              <label className="form-control">Precio anterior<input name="compare_at_price" type="number" min="0" step="0.01" /></label>
+              <label className="form-control">Categoría<select name="category_id"><option value="">Sin categoría</option>{(categoryResult.data ?? []).map((category) => <option key={category.id} value={category.id}>{categoryLabel(category.name)}</option>)}</select></label>
+              <label className="form-control">Tipo<select name="product_type"><option value="download">Descarga</option><option value="license">Licencia</option><option value="course">Curso</option><option value="subscription">Suscripción</option></select></label>
+              <label className="form-control editor-wide">Descripción<textarea name="description" maxLength={2000} rows={2} /></label>
+              <label className="form-control editor-wide">Imagen de portada (HTTPS)<input name="image_url" type="url" placeholder="https://..." maxLength={2000} /></label>
+              <label className="form-control editor-wide">Archivo digital<ProductFileInput /></label>
+              <label className="check-control"><input type="checkbox" name="is_featured" /> Destacar en la colección</label>
+              <label className="check-control"><input type="checkbox" name="is_new" /> Marcar como novedad</label>
+              <label className="check-control"><input type="checkbox" name="is_active" defaultChecked /> Publicar en tienda</label>
+            </div>
+            <button className="button-primary" type="submit">Crear producto <PackagePlus size={15} /></button>
+          </form>
+          <div className="managed-products">{(productResult.data ?? []).map((product) => <form className="product-editor" action={saveProduct} key={product.id}>
+            <input type="hidden" name="id" value={product.id} />
+            <div className="editor-heading"><strong>{product.name}</strong><span className={product.is_active ? "active-label" : "inactive-label"}>{product.is_active ? "Publicado" : "Oculto"}</span></div>
+            <div className="editor-fields">
+              <label className="form-control">Nombre<input name="name" defaultValue={product.name} required maxLength={120} /></label>
+              <label className="form-control">Slug<input name="slug" defaultValue={product.slug} required maxLength={160} /></label>
+              <label className="form-control">Precio actual<input name="price" type="number" min="0" step="0.01" defaultValue={product.price} required /></label>
+              <label className="form-control">Precio anterior<input name="compare_at_price" type="number" min="0" step="0.01" defaultValue={product.compare_at_price ?? ""} /></label>
+              <label className="form-control">Categoría<select name="category_id" defaultValue={product.category_id ?? ""}><option value="">Sin categoría</option>{(categoryResult.data ?? []).map((category) => <option key={category.id} value={category.id}>{categoryLabel(category.name)}</option>)}</select></label>
+              <label className="form-control">Tipo<select name="product_type" defaultValue={product.product_type}><option value="download">Descarga</option><option value="license">Licencia</option><option value="course">Curso</option><option value="subscription">Suscripción</option></select></label>
+              <label className="form-control editor-wide">Descripción<textarea name="description" defaultValue={product.description ?? ""} maxLength={2000} rows={2} /></label>
+              <label className="form-control editor-wide">Imagen de portada (HTTPS)<input name="image_url" type="url" defaultValue={product.image_url ?? ""} placeholder="https://..." maxLength={2000} /></label>
+              <label className="form-control editor-wide">Archivo digital<ProductFileInput defaultValue={product.file_url ?? ""} /></label>
+              <label className="check-control"><input type="checkbox" name="is_featured" defaultChecked={product.is_featured} /> Destacado</label>
+              <label className="check-control"><input type="checkbox" name="is_new" defaultChecked={product.is_new} /> Novedad</label>
+              <label className="check-control"><input type="checkbox" name="is_active" defaultChecked={product.is_active} /> Publicar en tienda</label>
+            </div>
+            <button className="button-quiet" type="submit">Guardar cambios</button>
+          </form>)}</div>
         </> : <p className="admin-empty">Tu rol permite consultar pedidos. Un administrador o vendedor puede editar el catálogo.</p>}
       </section>
       <p className="admin-footnote">Los pedidos se registran pendientes de pago. Confirma el pago antes de marcarlos como pagados o entregados.</p>

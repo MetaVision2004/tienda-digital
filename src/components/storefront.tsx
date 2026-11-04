@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { ArrowDownRight, ArrowRight, Check, ChevronRight, CircleHelp, Layers3, Minus, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, X } from "lucide-react";
-import { categoryLabel, formatCurrency, type StoreCategory, type StoreProduct } from "@/lib/catalog-model";
+import { categoryLabel, formatCurrency, safeImageUrl, type StoreCategory, type StoreProduct } from "@/lib/catalog-model";
+import { changeCartItem, clearCart, useCart } from "@/lib/cart-storage";
 
 type StorefrontProps = { products: StoreProduct[]; categories: StoreCategory[]; demo: boolean };
 type OrderResult = { orderId: string; accessToken: string; total: number };
@@ -10,11 +12,12 @@ type OrderResult = { orderId: string; accessToken: string; total: number };
 export default function Storefront({ products, categories, demo }: StorefrontProps) {
   const [activeCategory, setActiveCategory] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-  const [cart, setCart] = useState<Record<string, number>>({});
+  const cart = useCart();
   const [cartOpen, setCartOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [order, setOrder] = useState<OrderResult | null>(null);
+
   const cartItems = products.filter((product) => cart[product.id]);
   const cartCount = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
   const total = cartItems.reduce((sum, product) => sum + product.price * cart[product.id], 0);
@@ -25,13 +28,7 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
   });
 
   function changeQuantity(productId: string, delta: number) {
-    setCart((current) => {
-      const next = { ...current };
-      const quantity = (next[productId] ?? 0) + delta;
-      if (quantity <= 0) delete next[productId];
-      else next[productId] = Math.min(quantity, 10);
-      return next;
-    });
+    changeCartItem(productId, delta);
   }
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
@@ -48,7 +45,7 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "No fue posible crear el pedido.");
       setOrder(result as OrderResult);
-      setCart({});
+      clearCart();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Ocurrió un error inesperado.");
     } finally {
@@ -74,7 +71,15 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
         <div className="catalog-tools"><div className="category-list" aria-label="Filtrar por categoría"><button className={`category-chip ${activeCategory === null ? "active" : ""}`} type="button" onClick={() => setActiveCategory(null)}>Todo</button>{categories.map((category) => <button key={category.id} className={`category-chip ${activeCategory === category.id ? "active" : ""}`} type="button" onClick={() => setActiveCategory(category.id)}>{categoryLabel(category.name)}</button>)}</div><label className="search-field"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en la colección" aria-label="Buscar productos" /></label></div>
         <div className="product-grid">{filteredProducts.map((product, index) => {
           const category = categories.find((item) => item.id === product.category_id);
-          return <article className="product-card" key={product.id} style={{ animationDelay: `${index * 55}ms` }}><div className="product-art" data-tone={index % 4}><div className="art-caption"><small>{category ? categoryLabel(category.name) : "Recurso digital"}</small><strong>{product.name}</strong><span>Marea / Digital</span></div></div><div className="product-info"><div><h3>{product.name}</h3><p>{product.description || "Un recurso digital para avanzar a tu ritmo."}</p></div><span className="product-price">{formatCurrency(product.price)}</span></div><button className="product-add" type="button" aria-label={`Añadir ${product.name} al carrito`} onClick={() => { changeQuantity(product.id, 1); setOrder(null); }}><Plus size={16} /></button></article>;
+          const imageUrl = safeImageUrl(product.image_url);
+          return <article className="product-card" key={product.id} style={{ animationDelay: `${index * 55}ms` }}>
+            <Link className={`product-art ${imageUrl ? "has-image" : ""}`} data-tone={index % 4} href={`/producto/${product.slug}`} aria-label={`Ver ${product.name}`} style={imageUrl ? { backgroundImage: `url(${JSON.stringify(imageUrl)})` } : undefined}>
+              <span className="product-badges">{product.is_featured && <span className="featured-badge">Destacado</span>}{product.is_new && <span className="new-badge">Nuevo</span>}</span>
+              <div className="art-caption"><small>{category ? categoryLabel(category.name) : "Recurso digital"}</small><strong>{product.name}</strong><span>Marea / Digital</span></div>
+            </Link>
+            <div className="product-info"><div><h3><Link href={`/producto/${product.slug}`}>{product.name}</Link></h3><p>{product.description || "Un recurso digital para avanzar a tu ritmo."}</p></div><span className="product-price">{product.compare_at_price && product.compare_at_price > product.price && <del>{formatCurrency(product.compare_at_price)}</del>}{formatCurrency(product.price)}</span></div>
+            <button className="product-add" type="button" aria-label={`Añadir ${product.name} al carrito`} onClick={() => { changeQuantity(product.id, 1); setOrder(null); }}><Plus size={16} /></button>
+          </article>;
         })}{filteredProducts.length === 0 && <div className="empty-state"><strong>No encontramos ese recurso.</strong>Prueba otra búsqueda o categoría.</div>}</div>
         {demo && <div className="preview-note"><CircleHelp size={17} /><span>Estás viendo una colección de muestra. Conecta Supabase para cargar tus productos y habilitar pedidos reales.</span></div>}
       </section>

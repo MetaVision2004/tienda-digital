@@ -11,35 +11,54 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 const productSchema = z.object({
   id: z.preprocess((value) => value === "" ? undefined : value, z.uuid().optional()),
   name: z.string().trim().min(2).max(120),
+  slug: z.union([z.literal(""), z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(160)]),
   description: z.string().trim().max(2000),
   price: z.coerce.number().finite().min(0).max(99_999_999.99),
+  compareAtPrice: z.preprocess((value) => value === "" || value === null ? null : Number(value), z.number().finite().min(0).nullable()),
+  imageUrl: z.union([z.literal(""), z.url().refine((value) => value.startsWith("https://"))]),
   productType: z.enum(["download", "license", "course", "subscription"]),
   categoryId: z.preprocess((value) => value === "" ? null : Number(value), z.number().int().positive().nullable()),
   fileUrl: z.string().trim().max(1000),
+  isFeatured: z.boolean(),
+  isNew: z.boolean(),
   isActive: z.boolean(),
+}).superRefine((product, context) => {
+  if (product.compareAtPrice !== null && product.compareAtPrice <= product.price) {
+    context.addIssue({ code: "custom", path: ["compareAtPrice"], message: "El precio anterior debe ser mayor que el precio actual." });
+  }
 });
+
+function slugify(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 160) || "producto";
+}
 
 export async function saveProduct(formData: FormData) {
   const staff = await requireStaff(["admin", "seller"]);
   const parsed = productSchema.safeParse({
     id: formData.get("id"),
     name: formData.get("name"),
+    slug: formData.get("slug") ?? "",
     description: formData.get("description") ?? "",
     price: formData.get("price"),
+    compareAtPrice: formData.get("compare_at_price"),
+    imageUrl: formData.get("image_url") ?? "",
     productType: formData.get("product_type"),
     categoryId: formData.get("category_id") ?? "",
     fileUrl: formData.get("file_url") ?? "",
+    isFeatured: formData.get("is_featured") === "on",
+    isNew: formData.get("is_new") === "on",
     isActive: formData.get("is_active") === "on",
   });
   if (!parsed.success) redirect("/admin?notice=invalid-product");
 
-  const { id, name, description, price, productType, categoryId, fileUrl, isActive } = parsed.data;
-  const values = { company_id: staff.companyId, name, description: description || null, price, product_type: productType, category_id: categoryId, file_url: fileUrl || null, is_active: isActive };
+  const { id, name, description, price, compareAtPrice, imageUrl, productType, categoryId, fileUrl, isFeatured, isNew, isActive } = parsed.data;
+  const slug = parsed.data.slug || slugify(name);
+  const values = { company_id: staff.companyId, name, slug, description: description || null, price, compare_at_price: compareAtPrice, image_url: imageUrl || null, is_featured: isFeatured, is_new: isNew, product_type: productType, category_id: categoryId, file_url: fileUrl || null, is_active: isActive };
   const admin = createAdminClient();
   const result = id
     ? await admin.from("products").update(values).eq("id", id).eq("company_id", staff.companyId)
     : await admin.from("products").insert(values);
-  if (result.error) redirect("/admin?notice=save-failed");
+  if (result.error) redirect(`/admin?notice=${result.error.code === "23505" ? "slug-taken" : "save-failed"}`);
   revalidatePath("/");
   revalidatePath("/admin");
   redirect("/admin?notice=product-saved");
