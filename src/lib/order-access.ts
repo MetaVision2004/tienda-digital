@@ -1,18 +1,23 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isConfiguredValue } from "./env";
 
 const tokenLifetimeSeconds = 90 * 24 * 60 * 60;
 
 function getSecret() {
   const secret = process.env.ORDER_ACCESS_SECRET;
-  if (!secret || secret.length < 32) return null;
+  if (!isConfiguredValue(secret) || secret.length < 32) return null;
   return secret;
 }
 
-export function createOrderAccessToken(orderId: string) {
+export function hasOrderAccessSecret() {
+  return getSecret() !== null;
+}
+
+export function createOrderAccessToken(orderId: string, issuedAt = Date.now()) {
   const secret = getSecret();
   if (!secret) throw new Error("ORDER_ACCESS_SECRET debe tener al menos 32 caracteres.");
 
-  const payload = Buffer.from(JSON.stringify({ orderId, expiresAt: Math.floor(Date.now() / 1000) + tokenLifetimeSeconds })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ orderId, expiresAt: Math.floor(issuedAt / 1000) + tokenLifetimeSeconds })).toString("base64url");
   const signature = createHmac("sha256", secret).update(payload).digest("base64url");
   return `${payload}.${signature}`;
 }

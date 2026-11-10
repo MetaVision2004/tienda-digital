@@ -2,13 +2,14 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import AdminLoginForm from "@/components/admin-login-form";
+import { hasSupabaseServerConfig } from "@/lib/env-server";
 import { getStaffSession } from "@/lib/staff-auth";
 
 async function AdminLoginContent() {
   await connection();
   const session = await getStaffSession();
   if (session) redirect("/admin");
-  const configured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.STORE_COMPANY_ID);
+  const configured = hasSupabaseServerConfig();
   return <AdminLoginForm configured={configured} />;
 }
 

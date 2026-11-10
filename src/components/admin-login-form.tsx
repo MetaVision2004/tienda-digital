@@ -4,7 +4,6 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, KeyRound, Layers3 } from "lucide-react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function AdminLoginForm({ configured }: { configured: boolean }) {
   const router = useRouter();
@@ -17,12 +16,13 @@ export default function AdminLoginForm({ configured }: { configured: boolean }) 
     setBusy(true);
     const formData = new FormData(event.currentTarget);
     try {
-      const supabase = createSupabaseBrowserClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: String(formData.get("email")),
-        password: String(formData.get("password")),
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: formData.get("email"), password: formData.get("password") }),
       });
-      if (signInError) throw signInError;
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "No se pudo iniciar sesión.");
       router.replace("/admin");
       router.refresh();
     } catch (caught) {

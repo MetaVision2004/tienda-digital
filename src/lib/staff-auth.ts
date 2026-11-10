@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { hasSupabaseServerConfig } from "@/lib/env-server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -12,7 +13,7 @@ export type StaffSession = {
 
 export async function getStaffSession(): Promise<StaffSession | null> {
   const companyId = process.env.STORE_COMPANY_ID;
-  if (!companyId || !process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) return null;
+  if (!companyId || !hasSupabaseServerConfig()) return null;
 
   const authClient = await createSupabaseServerClient();
   const { data: { user }, error: authError } = await authClient.auth.getUser();

@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireStaff } from "@/lib/staff-auth";
+import { orderStatuses } from "@/lib/order-state";
+import { isCompanyStoragePath } from "@/lib/storage-path";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -53,8 +55,13 @@ export async function saveProduct(formData: FormData) {
 
   const { id, name, description, price, compareAtPrice, imageUrl, productType, categoryId, fileUrl, isFeatured, isNew, isActive } = parsed.data;
   const slug = parsed.data.slug || slugify(name);
-  const values = { company_id: staff.companyId, name, slug, description: description || null, price, compare_at_price: compareAtPrice, image_url: imageUrl || null, is_featured: isFeatured, is_new: isNew, product_type: productType, category_id: categoryId, file_url: fileUrl || null, is_active: isActive };
+  if (fileUrl && !isCompanyStoragePath(fileUrl, staff.companyId)) redirect("/admin?notice=invalid-product");
   const admin = createAdminClient();
+  if (categoryId !== null) {
+    const { data: category } = await admin.from("categories").select("id").eq("id", categoryId).eq("company_id", staff.companyId).maybeSingle();
+    if (!category) redirect("/admin?notice=invalid-product");
+  }
+  const values = { company_id: staff.companyId, name, slug, description: description || null, price, compare_at_price: compareAtPrice, image_url: imageUrl || null, is_featured: isFeatured, is_new: isNew, product_type: productType, category_id: categoryId, file_url: fileUrl || null, is_active: isActive };
   const result = id
     ? await admin.from("products").update(values).eq("id", id).eq("company_id", staff.companyId)
     : await admin.from("products").insert(values);
@@ -64,32 +71,30 @@ export async function saveProduct(formData: FormData) {
   redirect("/admin?notice=product-saved");
 }
 
-const statusSchema = z.object({ orderId: z.uuid(), status: z.enum(["pending", "paid", "delivered", "cancelled", "refunded"]) });
+const statusSchema = z.object({ orderId: z.uuid(), status: z.enum(orderStatuses) });
 
 export async function updateOrder(formData: FormData) {
-  const staff = await requireStaff();
+  const staff = await requireStaff(["admin", "seller"]);
   const parsed = statusSchema.safeParse({ orderId: formData.get("order_id"), status: formData.get("status") });
   if (!parsed.success) redirect("/admin?notice=invalid-order");
 
   const admin = createAdminClient();
-  const { data: order } = await admin.from("orders").select("customer_id").eq("id", parsed.data.orderId).maybeSingle();
-  if (!order) redirect("/admin?notice=order-not-found");
-  const { data: customer } = await admin.from("customers").select("id").eq("id", order.customer_id).eq("company_id", staff.companyId).maybeSingle();
-  if (!customer) redirect("/admin?notice=order-not-found");
-
-  const { error } = await admin.from("orders").update({ status: parsed.data.status }).eq("id", parsed.data.orderId);
-  if (error) redirect("/admin?notice=save-failed");
-  const detailsForm = [...formData.entries()].filter(([name]) => name.startsWith("licenseKey_"));
-  for (const [field, rawValue] of detailsForm) {
+  const licenseKeys = [...formData.entries()].filter(([name]) => name.startsWith("licenseKey_")).map(([field, rawValue]) => {
     const detailId = field.slice("licenseKey_".length);
-    if (!z.uuid().safeParse(detailId).success) continue;
-    const licenseKey = String(rawValue).trim().slice(0, 500) || null;
-    await admin.from("order_details").update({ license_key: licenseKey }).eq("id", detailId).eq("order_id", parsed.data.orderId);
-  }
-  if (parsed.data.status === "delivered") {
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await admin.from("order_details").update({ download_expires_at: expiresAt }).eq("order_id", parsed.data.orderId);
-  }
+    if (!z.uuid().safeParse(detailId).success) return null;
+    return { detailId, licenseKey: String(rawValue).trim().slice(0, 500) };
+  });
+  if (licenseKeys.some((item) => item === null)) redirect("/admin?notice=invalid-order");
+
+  const { error } = await admin.rpc("update_order_with_details", {
+    p_company_id: staff.companyId,
+    p_order_id: parsed.data.orderId,
+    p_status: parsed.data.status,
+    p_license_keys: licenseKeys,
+  });
+  if (error?.code === "P0002") redirect("/admin?notice=order-not-found");
+  if (error?.code === "23514" || error?.code === "22023") redirect("/admin?notice=invalid-order");
+  if (error) redirect("/admin?notice=save-failed");
   revalidatePath("/admin");
   revalidatePath("/", "page");
   redirect("/admin?notice=order-updated");

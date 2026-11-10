@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { hasSupabaseServerConfig } from "@/lib/env-server";
 import type { StoreCategory, StoreProduct } from "@/lib/catalog-model";
 
 const demoCategories: StoreCategory[] = [
@@ -13,13 +14,13 @@ const demoProducts: StoreProduct[] = [
 
 export async function getStorefrontData() {
   const companyId = process.env.STORE_COMPANY_ID;
-  const configured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY && companyId);
+  const configured = hasSupabaseServerConfig() && Boolean(companyId);
   if (!configured || !companyId) return { products: demoProducts, categories: demoCategories, demo: true };
 
   const supabase = createAdminClient();
   const [productResult, categoryResult] = await Promise.all([
     supabase.from("products").select("id,category_id,slug,name,description,price,compare_at_price,image_url,is_featured,is_new,product_type").eq("company_id", companyId).eq("is_active", true).order("is_featured", { ascending: false }).order("is_new", { ascending: false }).order("created_at", { ascending: false }),
-    supabase.from("categories").select("id,name").order("name"),
+    supabase.from("categories").select("id,name").eq("company_id", companyId).order("name"),
   ]);
   if (productResult.error) throw new Error("No fue posible cargar el catálogo.");
   if (categoryResult.error) throw new Error("No fue posible cargar las categorías.");
@@ -33,7 +34,7 @@ export async function getStorefrontData() {
 
 export async function getProductBySlug(slug: string) {
   const companyId = process.env.STORE_COMPANY_ID;
-  const configured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && companyId);
+  const configured = hasSupabaseServerConfig() && Boolean(companyId);
   if (!configured || !companyId) return demoProducts.find((product) => product.slug === slug) ?? null;
 
   const { data, error } = await createAdminClient()

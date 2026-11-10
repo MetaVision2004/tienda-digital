@@ -1,31 +1,49 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { connection } from "next/server";
-import { ArrowLeft, ArrowUpRight, CircleCheck, Layers3, LogOut, PackagePlus, ShoppingBag } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, CircleCheck, Layers3, LogOut, PackagePlus, ShoppingBag, Tag, Trash2, UsersRound } from "lucide-react";
 import { categoryLabel, formatCurrency } from "@/lib/catalog-model";
+import { getOrderStatusOptions } from "@/lib/order-state";
 import { requireStaff } from "@/lib/staff-auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import ProductFileInput from "@/components/product-file-input";
+import { createStaff, deleteCategory, saveCategory, updateStaff } from "./management-actions";
 import { saveProduct, signOut, updateOrder } from "./actions";
 
-const statuses = ["pending", "paid", "delivered", "cancelled", "refunded"] as const;
 const statusLabels: Record<string, string> = { pending: "Pendiente", paid: "Pagado", delivered: "Entregado", cancelled: "Cancelado", refunded: "Reembolsado" };
-const notices: Record<string, string> = { "product-saved": "Producto guardado.", "order-updated": "Pedido actualizado.", "invalid-product": "Revisa los datos del producto.", "invalid-order": "No se pudo validar el pedido.", "order-not-found": "No se encontró el pedido de esta empresa.", "slug-taken": "Ese slug ya está asignado a otro producto de la empresa.", "save-failed": "No se pudieron guardar los cambios." };
+const notices: Record<string, string> = { "product-saved": "Producto guardado.", "order-updated": "Pedido actualizado.", "invalid-product": "Revisa los datos del producto.", "invalid-order": "Transición no permitida o pedido actualizado por otra persona. Recarga e inténtalo de nuevo.", "order-not-found": "No se encontró el pedido de esta empresa.", "slug-taken": "Ese slug ya está asignado a otro producto de la empresa.", "category-saved": "Categoría guardada.", "category-deleted": "Categoría eliminada.", "category-exists": "Ya existe una categoría con ese nombre.", "category-in-use": "Mueve los productos de esta categoría antes de eliminarla.", "category-not-found": "No se encontró la categoría de esta empresa.", "invalid-category": "Revisa el nombre de la categoría.", "staff-created": "Acceso del personal creado.", "staff-updated": "Personal actualizado.", "staff-create-failed": "No se pudo crear el acceso. Revisa si el correo ya existe.", "staff-not-found": "No se encontró a esta persona en la empresa.", "invalid-staff": "Revisa los datos del personal.", "role-not-found": "El rol solicitado no existe.", "keep-admin-active": "La empresa debe conservar al menos un administrador activo.", "save-failed": "No se pudieron guardar los cambios." };
 
 async function AdminContent({ searchParams }: PageProps<"/admin">) {
   await connection();
   const staff = await requireStaff();
   const canManageProducts = staff.roles.some((role) => ["admin", "seller"].includes(role));
+  const canManageOrders = staff.roles.some((role) => ["admin", "seller"].includes(role));
+  const isAdmin = staff.roles.includes("admin");
   const admin = createAdminClient();
   const [categoryResult, productResult, customerResult] = await Promise.all([
-    admin.from("categories").select("id,name").order("name"),
+    admin.from("categories").select("id,name").eq("company_id", staff.companyId).order("name"),
     admin.from("products").select("id,category_id,slug,name,description,price,compare_at_price,image_url,is_featured,is_new,product_type,file_url,is_active,created_at").eq("company_id", staff.companyId).order("created_at", { ascending: false }),
     admin.from("customers").select("id,full_name,email").eq("company_id", staff.companyId),
   ]);
   const customers = customerResult.data ?? [];
+  const staffResult = isAdmin
+    ? await admin.from("users").select("id,full_name,email,is_active").eq("company_id", staff.companyId).order("full_name")
+    : { data: [], error: null };
+  const roleResult = isAdmin
+    ? await admin.from("roles").select("id,name").order("name")
+    : { data: [], error: null };
+  const staffIds = (staffResult.data ?? []).map((member) => member.id);
+  const assignmentResult = isAdmin && staffIds.length
+    ? await admin.from("user_roles").select("user_id,role_id").in("user_id", staffIds)
+    : { data: [], error: null };
+  const rolesById = new Map((roleResult.data ?? []).map((role) => [role.id, role.name]));
+  const roleByStaffId = new Map<string, string>();
+  for (const assignment of assignmentResult.data ?? []) {
+    const roleName = rolesById.get(assignment.role_id);
+    if (roleName && !roleByStaffId.has(assignment.user_id)) roleByStaffId.set(assignment.user_id, roleName);
+  }
   const customerById = new Map(customers.map((customer) => [customer.id, customer]));
-  const customerIds = customers.map((customer) => customer.id);
-  const orderResult = customerIds.length ? await admin.from("orders").select("id,customer_id,status,total,created_at").in("customer_id", customerIds).order("created_at", { ascending: false }).limit(50) : { data: [], error: null };
+  const orderResult = await admin.from("orders").select("id,customer_id,status,total,created_at,delivered_at").eq("company_id", staff.companyId).order("created_at", { ascending: false }).limit(50);
   const orders = orderResult.data ?? [];
   const orderIds = orders.map((order) => order.id);
   const detailResult = orderIds.length ? await admin.from("order_details").select("id,order_id,product_id,quantity,unit_price,license_key").in("order_id", orderIds) : { data: [], error: null };
@@ -50,7 +68,7 @@ async function AdminContent({ searchParams }: PageProps<"/admin">) {
           const customer = customerById.get(order.customer_id);
           const orderDetails = details.filter((detail) => detail.order_id === order.id);
           return <article className="order-row" key={order.id}><div className="order-summary"><div><strong>{customer?.full_name ?? "Cliente"}</strong><span>{customer?.email ?? ""}</span><small>{new Date(order.created_at).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" })} · #{order.id.slice(0, 8)}</small></div><span className={`order-status status-${order.status}`}>{statusLabels[order.status] ?? order.status}</span><strong className="order-total">{formatCurrency(Number(order.total))}</strong></div>
-            <form className="order-edit" action={updateOrder}><input type="hidden" name="order_id" value={order.id} /><div className="order-lines">{orderDetails.map((detail) => <label className="order-line" key={detail.id}><span>{productNames.get(detail.product_id)?.name ?? "Producto"} <small>× {detail.quantity} · {formatCurrency(Number(detail.unit_price))}</small></span><input name={`licenseKey_${detail.id}`} defaultValue={detail.license_key ?? ""} placeholder="Clave de licencia (opcional)" aria-label={`Clave de licencia para ${productNames.get(detail.product_id)?.name ?? "producto"}`} /></label>)}</div><div className="order-actions"><label className="sr-only" htmlFor={`status-${order.id}`}>Estado del pedido</label><select id={`status-${order.id}`} name="status" defaultValue={order.status}>{statuses.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</select><button className="button-quiet" type="submit"><CircleCheck size={15} /> Guardar pedido</button></div></form>
+            {canManageOrders ? <form className="order-edit" action={updateOrder}><input type="hidden" name="order_id" value={order.id} /><div className="order-lines">{orderDetails.map((detail) => <label className="order-line" key={detail.id}><span>{productNames.get(detail.product_id)?.name ?? "Producto"} <small>× {detail.quantity} · {formatCurrency(Number(detail.unit_price))}</small></span><input name={`licenseKey_${detail.id}`} defaultValue={detail.license_key ?? ""} placeholder="Clave de licencia (opcional)" aria-label={`Clave de licencia para ${productNames.get(detail.product_id)?.name ?? "producto"}`} /></label>)}</div><div className="order-actions"><label className="sr-only" htmlFor={`status-${order.id}`}>Estado del pedido</label><select id={`status-${order.id}`} name="status" defaultValue={order.status}>{getOrderStatusOptions(order.status).map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}</select><button className="button-quiet" type="submit"><CircleCheck size={15} /> Guardar pedido</button></div></form> : <div className="order-edit"><div className="order-lines">{orderDetails.map((detail) => <div className="order-line" key={detail.id}><span>{productNames.get(detail.product_id)?.name ?? "Producto"} <small>× {detail.quantity} · {formatCurrency(Number(detail.unit_price))}</small></span></div>)}</div></div>}
           </article>;
         })}</div> : <div className="admin-empty">Todavía no hay pedidos registrados.</div>}
       </section>
@@ -96,6 +114,16 @@ async function AdminContent({ searchParams }: PageProps<"/admin">) {
           </form>)}</div>
         </> : <p className="admin-empty">Tu rol permite consultar pedidos. Un administrador o vendedor puede editar el catálogo.</p>}
       </section>
+
+      {canManageProducts && <section className="admin-section"><div className="admin-section-heading"><div><span className="eyebrow">Organización</span><h2>Categorías</h2></div><span className="admin-count"><Tag size={14} /> {(categoryResult.data ?? []).length}</span></div>
+        <form className="category-create" action={saveCategory}><label className="form-control">Nueva categoría<input name="name" required minLength={2} maxLength={80} /></label><button className="button-primary" type="submit"><Tag size={15} /> Agregar categoría</button></form>
+        <div className="category-manager">{(categoryResult.data ?? []).map((category) => <div className="category-row" key={category.id}><form action={saveCategory}><input type="hidden" name="id" value={category.id} /><label className="form-control"><span className="sr-only">Nombre de categoría</span><input name="name" defaultValue={category.name} required minLength={2} maxLength={80} /></label><button className="button-quiet" type="submit">Guardar</button></form><form action={deleteCategory}><input type="hidden" name="id" value={category.id} /><button className="icon-button" type="submit" aria-label={`Eliminar ${category.name}`} title="Eliminar categoría"><Trash2 size={15} /></button></form></div>)}</div>
+      </section>}
+
+      {isAdmin && <section className="admin-section"><div className="admin-section-heading"><div><span className="eyebrow">Acceso interno</span><h2>Personal</h2></div><span className="admin-count"><UsersRound size={14} /> {(staffResult.data ?? []).length}</span></div>
+        <form className="product-editor new-product" action={createStaff}><div className="editor-heading"><UsersRound size={17} /><strong>Agregar acceso al equipo</strong></div><div className="editor-fields"><label className="form-control">Nombre<input name="full_name" required minLength={2} maxLength={120} /></label><label className="form-control">Correo<input name="email" type="email" autoComplete="off" required maxLength={254} /></label><label className="form-control">Contraseña inicial<input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={128} /></label><label className="form-control">Rol<select name="role" defaultValue="support"><option value="admin">Admin</option><option value="seller">Seller</option><option value="support">Support</option></select></label></div><button className="button-primary" type="submit">Crear acceso <UsersRound size={15} /></button></form>
+        <div className="staff-manager">{(staffResult.data ?? []).map((member) => <form className="staff-row" action={updateStaff} key={member.id}><input type="hidden" name="user_id" value={member.id} /><div className="staff-identity"><strong>{member.full_name}</strong><span>{member.email}</span></div><label className="form-control">Rol<select name="role" defaultValue={roleByStaffId.get(member.id) ?? "support"}><option value="admin">Admin</option><option value="seller">Seller</option><option value="support">Support</option></select></label><label className="check-control"><input type="checkbox" name="is_active" defaultChecked={member.is_active} /> Activo</label><button className="button-quiet" type="submit">Guardar</button></form>)}</div>
+      </section>}
       <p className="admin-footnote">Los pedidos se registran pendientes de pago. Confirma el pago antes de marcarlos como pagados o entregados.</p>
     </div>
   </main>;

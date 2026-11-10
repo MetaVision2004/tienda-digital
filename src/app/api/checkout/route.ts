@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { z } from "zod";
-import { createOrderAccessToken } from "@/lib/order-access";
+import { createOrderAccessToken, hasOrderAccessSecret } from "@/lib/order-access";
+import { hasSupabaseServerConfig } from "@/lib/env-server";
+import { consumeRateLimit, getClientAddress } from "@/lib/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const checkoutSchema = z.object({
+  idempotencyKey: z.uuid(),
   fullName: z.string().trim().min(2).max(120),
   email: z.email().max(254).transform((email) => email.toLowerCase()),
   items: z.array(z.object({ productId: z.uuid(), quantity: z.number().int().min(1).max(10) })).min(1).max(20),
@@ -11,8 +15,7 @@ const checkoutSchema = z.object({
 
 export async function POST(request: Request) {
   const companyId = process.env.STORE_COMPANY_ID;
-  const hasSupabase = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY && companyId);
-  if (!hasSupabase || !process.env.ORDER_ACCESS_SECRET || process.env.ORDER_ACCESS_SECRET.length < 32) {
+  if (!hasSupabaseServerConfig() || !companyId || !hasOrderAccessSecret()) {
     return NextResponse.json({ error: "La tienda todavía no está configurada para recibir pedidos." }, { status: 503 });
   }
 
@@ -20,6 +23,10 @@ export async function POST(request: Request) {
   if (origin && new URL(origin).host !== new URL(request.url).host) {
     return NextResponse.json({ error: "Solicitud no permitida." }, { status: 403 });
   }
+
+  const rateLimit = await consumeRateLimit("checkout", getClientAddress(request.headers), 8, 3600);
+  if (rateLimit === null) return NextResponse.json({ error: "El checkout está temporalmente no disponible." }, { status: 503 });
+  if (!rateLimit) return NextResponse.json({ error: "Demasiados intentos. Espera antes de crear otro pedido." }, { status: 429 });
 
   let body: unknown;
   try {
@@ -30,58 +37,39 @@ export async function POST(request: Request) {
   const parsed = checkoutSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Revisa el nombre, el correo y los productos del pedido." }, { status: 400 });
 
-  const { fullName, email, items } = parsed.data;
+  const { idempotencyKey, fullName, email, items } = parsed.data;
   const quantities = new Map<string, number>();
   for (const item of items) quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
   if ([...quantities.values()].some((quantity) => quantity > 10)) {
     return NextResponse.json({ error: "La cantidad máxima por producto es 10." }, { status: 400 });
   }
 
-  const supabase = createAdminClient();
-  const productIds = [...quantities.keys()];
-  const { data: products, error: productsError } = await supabase
-    .from("products")
-    .select("id,name,price")
-    .eq("company_id", companyId!)
-    .eq("is_active", true)
-    .in("id", productIds);
+  const normalizedItems = [...quantities.entries()]
+    .map(([productId, quantity]) => ({ productId, quantity }))
+    .sort((left, right) => left.productId.localeCompare(right.productId));
+  const requestHash = createHash("sha256")
+    .update(JSON.stringify({ fullName, email, items: normalizedItems }))
+    .digest("hex");
 
-  if (productsError) return NextResponse.json({ error: "No fue posible validar el catálogo." }, { status: 500 });
-  if (!products || products.length !== productIds.length) {
-    return NextResponse.json({ error: "Uno o más productos ya no están disponibles." }, { status: 409 });
+  const { data, error } = await createAdminClient().rpc("create_checkout_order", {
+    p_company_id: companyId!,
+    p_full_name: fullName,
+    p_email: email,
+    p_items: normalizedItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+    p_request_key: idempotencyKey,
+    p_request_hash: requestHash,
+  });
+
+  if (error) {
+    if (error.code === "P0002") return NextResponse.json({ error: "Uno o más productos ya no están disponibles." }, { status: 409 });
+    if (error.code === "23505") return NextResponse.json({ error: "La clave de compra ya se usó con otros datos. Inicia de nuevo el checkout." }, { status: 409 });
+    if (error.code === "22023" || error.code === "22003") return NextResponse.json({ error: "Revisa los datos y cantidades del pedido." }, { status: 400 });
+    console.error(JSON.stringify({ event: "checkout_rpc_failed", code: error.code }));
+    return NextResponse.json({ error: "No fue posible crear el pedido." }, { status: 500 });
   }
 
-  const productMap = new Map(products.map((product) => [product.id, product]));
-  const total = products.reduce((sum, product) => sum + Number(product.price) * quantities.get(product.id)!, 0);
-  if (!Number.isFinite(total) || total > 99_999_999.99) {
-    return NextResponse.json({ error: "El total del pedido está fuera del rango permitido." }, { status: 400 });
-  }
+  const order = Array.isArray(data) ? data[0] : null;
+  if (!order?.order_id) return NextResponse.json({ error: "No fue posible crear el pedido." }, { status: 500 });
 
-  const { data: customer, error: customerError } = await supabase
-    .from("customers")
-    .upsert({ company_id: companyId!, full_name: fullName, email }, { onConflict: "company_id,email" })
-    .select("id")
-    .single();
-  if (customerError || !customer) return NextResponse.json({ error: "No fue posible registrar los datos del cliente." }, { status: 500 });
-
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .insert({ customer_id: customer.id, status: "pending", total })
-    .select("id")
-    .single();
-  if (orderError || !order) return NextResponse.json({ error: "No fue posible crear el pedido." }, { status: 500 });
-
-  const details = [...quantities].map(([productId, quantity]) => ({
-    order_id: order.id,
-    product_id: productId,
-    quantity,
-    unit_price: Number(productMap.get(productId)!.price),
-  }));
-  const { error: detailError } = await supabase.from("order_details").insert(details);
-  if (detailError) {
-    await supabase.from("orders").delete().eq("id", order.id);
-    return NextResponse.json({ error: "No fue posible completar las líneas del pedido." }, { status: 500 });
-  }
-
-  return NextResponse.json({ orderId: order.id, accessToken: createOrderAccessToken(order.id), total }, { status: 201 });
+  return NextResponse.json({ orderId: order.order_id, accessToken: createOrderAccessToken(order.order_id, new Date(order.order_created_at).getTime()), total: Number(order.total) }, { status: order.created ? 201 : 200 });
 }

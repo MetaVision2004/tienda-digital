@@ -1,10 +1,34 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ArrowRight, Layers3, Sparkles } from "lucide-react";
 import AddToCartButton from "@/components/add-to-cart-button";
 import { formatCurrency, safeImageUrl } from "@/lib/catalog-model";
 import { getProductBySlug } from "@/lib/storefront-data";
+
+export async function generateMetadata({ params }: PageProps<"/producto/[slug]">): Promise<Metadata> {
+  const { slug } = await params;
+  const product = await getProductBySlug(slug);
+  if (!product) return { title: "Producto no encontrado | Marea Digital", robots: { index: false, follow: false } };
+
+  const description = product.description || "Un recurso digital para avanzar a tu ritmo.";
+  const imageUrl = safeImageUrl(product.image_url);
+  const canonical = `/producto/${product.slug}`;
+
+  return {
+    title: `${product.name} | Marea Digital`,
+    description,
+    alternates: { canonical },
+    openGraph: {
+      type: "website",
+      title: `${product.name} | Marea Digital`,
+      description,
+      url: canonical,
+      ...(imageUrl ? { images: [imageUrl] } : {}),
+    },
+  };
+}
 
 async function ProductContent({ params }: PageProps<"/producto/[slug]">) {
   const { slug } = await params;

@@ -14,14 +14,14 @@ async function OrderContent({ params }: { params: Promise<{ token: string }> }) 
   if (!access) notFound();
 
   const admin = createAdminClient();
-  const { data: order } = await admin.from("orders").select("id,customer_id,status,total,created_at").eq("id", access.orderId).maybeSingle();
+  const { data: order } = await admin.from("orders").select("id,customer_id,company_id,status,total,created_at,delivered_at").eq("id", access.orderId).maybeSingle();
   if (!order) notFound();
-  const { data: customer } = await admin.from("customers").select("company_id,full_name").eq("id", order.customer_id).maybeSingle();
+  const { data: customer } = await admin.from("customers").select("full_name").eq("id", order.customer_id).eq("company_id", order.company_id).maybeSingle();
   if (!customer) notFound();
   const { data: details } = await admin.from("order_details").select("id,product_id,quantity,unit_price,license_key,download_expires_at").eq("order_id", order.id);
   const productIds = (details ?? []).map((detail) => detail.product_id);
   const { data: products } = productIds.length
-    ? await admin.from("products").select("id,name,product_type,file_url").eq("company_id", customer.company_id).in("id", productIds)
+    ? await admin.from("products").select("id,name,product_type,file_url").eq("company_id", order.company_id).in("id", productIds)
     : { data: [] };
   const productMap = new Map((products ?? []).map((product) => [product.id, product]));
 

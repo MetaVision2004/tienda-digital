@@ -8,27 +8,40 @@ import { changeCartItem, clearCart, useCart } from "@/lib/cart-storage";
 
 type StorefrontProps = { products: StoreProduct[]; categories: StoreCategory[]; demo: boolean };
 type OrderResult = { orderId: string; accessToken: string; total: number };
+const checkoutKeyStorage = "marea-checkout-idempotency-key";
+const productTypeLabels: Record<StoreProduct["product_type"], string> = { download: "Descarga", license: "Licencia", course: "Curso", subscription: "Suscripción" };
 
 export default function Storefront({ products, categories, demo }: StorefrontProps) {
   const [activeCategory, setActiveCategory] = useState<number | null>(null);
+  const [activeType, setActiveType] = useState<StoreProduct["product_type"] | "all">("all");
   const [search, setSearch] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
   const cart = useCart();
   const [cartOpen, setCartOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [order, setOrder] = useState<OrderResult | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState("");
 
   const cartItems = products.filter((product) => cart[product.id]);
   const cartCount = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
   const total = cartItems.reduce((sum, product) => sum + product.price * cart[product.id], 0);
   const filteredProducts = products.filter((product) => {
     const matchesCategory = activeCategory === null || product.category_id === activeCategory;
+    const matchesType = activeType === "all" || product.product_type === activeType;
+    const matchesPrice = maxPrice === "" || (Number.isFinite(Number(maxPrice)) && product.price <= Number(maxPrice));
     const matchesSearch = `${product.name} ${product.description ?? ""}`.toLowerCase().includes(search.toLowerCase());
-    return matchesCategory && matchesSearch;
+    return matchesCategory && matchesType && matchesPrice && matchesSearch;
   });
 
   function changeQuantity(productId: string, delta: number) {
     changeCartItem(productId, delta);
+    resetIdempotencyKey();
+  }
+
+  function resetIdempotencyKey() {
+    setIdempotencyKey("");
+    sessionStorage.removeItem(checkoutKeyStorage);
   }
 
   async function submitOrder(event: FormEvent<HTMLFormElement>) {
@@ -36,15 +49,19 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
     setError("");
     setSubmitting(true);
     const formData = new FormData(event.currentTarget);
+    const requestKey = idempotencyKey || sessionStorage.getItem(checkoutKeyStorage) || crypto.randomUUID();
+    setIdempotencyKey(requestKey);
+    sessionStorage.setItem(checkoutKeyStorage, requestKey);
     try {
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fullName: formData.get("fullName"), email: formData.get("email"), items: cartItems.map((product) => ({ productId: product.id, quantity: cart[product.id] })) }),
+        body: JSON.stringify({ idempotencyKey: requestKey, fullName: formData.get("fullName"), email: formData.get("email"), items: cartItems.map((product) => ({ productId: product.id, quantity: cart[product.id] })) }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "No fue posible crear el pedido.");
       setOrder(result as OrderResult);
+      resetIdempotencyKey();
       clearCart();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Ocurrió un error inesperado.");
@@ -68,7 +85,7 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
       <section className="trust-strip" id="beneficios" aria-label="Beneficios de la tienda"><span className="trust-item"><Sparkles size={15} /> Selección curada</span><span className="trust-item"><ShieldCheck size={15} /> Compra segura</span><span className="trust-item"><ArrowDownRight size={15} /> Acceso digital</span><span className="trust-item"><CircleHelp size={15} /> Ayuda cuando la necesitas</span></section>
       <section className="catalog-section" id="catalogo">
         <div className="section-heading"><div><span className="eyebrow">Encuentra tu siguiente paso</span><h2>Una buena idea<br />merece herramientas.</h2></div><p>Guías, cursos y recursos listos para acompañarte del primer borrador al resultado final.</p></div>
-        <div className="catalog-tools"><div className="category-list" aria-label="Filtrar por categoría"><button className={`category-chip ${activeCategory === null ? "active" : ""}`} type="button" onClick={() => setActiveCategory(null)}>Todo</button>{categories.map((category) => <button key={category.id} className={`category-chip ${activeCategory === category.id ? "active" : ""}`} type="button" onClick={() => setActiveCategory(category.id)}>{categoryLabel(category.name)}</button>)}</div><label className="search-field"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en la colección" aria-label="Buscar productos" /></label></div>
+        <div className="catalog-tools"><div className="category-list" aria-label="Filtrar por categoría"><button className={`category-chip ${activeCategory === null ? "active" : ""}`} type="button" onClick={() => setActiveCategory(null)}>Todo</button>{categories.map((category) => <button key={category.id} className={`category-chip ${activeCategory === category.id ? "active" : ""}`} type="button" onClick={() => setActiveCategory(category.id)}>{categoryLabel(category.name)}</button>)}</div><div className="catalog-refinements"><label className="search-field"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en la colección" aria-label="Buscar productos" /></label><label className="filter-field">Tipo<select value={activeType} onChange={(event) => setActiveType(event.target.value as StoreProduct["product_type"] | "all")}><option value="all">Todos</option>{Object.entries(productTypeLabels).map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label><label className="filter-field">Precio máximo<input type="number" min="0" step="0.01" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} aria-label="Precio máximo" /></label></div></div>
         <div className="product-grid">{filteredProducts.map((product, index) => {
           const category = categories.find((item) => item.id === product.category_id);
           const imageUrl = safeImageUrl(product.image_url);
@@ -91,7 +108,7 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
       <div className="drawer-heading"><h2>{order ? "Pedido recibido" : "Tu selección"}</h2><button className="icon-button" type="button" aria-label="Cerrar" onClick={() => setCartOpen(false)}><X size={17} /></button></div>
       {order ? <div className="checkout-success"><Check size={34} /><span className="status-pill">Pedido pendiente de pago</span><h3>Ya está en marcha.</h3><p>Tu pedido {order.orderId.slice(0, 8)} se registró por {formatCurrency(order.total)}. El equipo actualizará su estado cuando confirme el pago.</p><a className="button-primary" href={`/orders/${order.accessToken}`}>Consultar pedido <ArrowRight size={15} /></a></div> : <>
         <div className="drawer-items">{cartItems.length === 0 ? <div className="empty-state"><strong>Tu carrito está listo para una idea.</strong>Agrega un recurso de la colección.</div> : cartItems.map((product) => <div className="cart-line" key={product.id}><div><strong>{product.name}</strong><small>{formatCurrency(product.price)} · {formatCurrency(product.price * cart[product.id])}</small></div><div className="quantity-control"><button type="button" aria-label={`Quitar una unidad de ${product.name}`} onClick={() => changeQuantity(product.id, -1)}><Minus size={13} /></button><span>{cart[product.id]}</span><button type="button" aria-label={`Agregar una unidad de ${product.name}`} onClick={() => changeQuantity(product.id, 1)}><Plus size={13} /></button></div></div>)}</div>
-        {cartItems.length > 0 && <><div className="drawer-total"><span>Total del pedido</span><strong>{formatCurrency(total)}</strong></div>{demo ? <button className="button-primary" type="button" disabled>Conecta Supabase para comprar</button> : <form className="checkout-form" onSubmit={submitOrder}><h3>¿A quién preparamos el pedido?</h3><label className="form-control">Nombre completo<input name="fullName" autoComplete="name" required maxLength={120} /></label><label className="form-control">Correo electrónico<input name="email" type="email" autoComplete="email" required maxLength={254} /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button-primary" type="submit" disabled={submitting}>{submitting ? "Registrando pedido..." : "Crear pedido"} <ArrowRight size={15} /></button><small>El pedido quedará pendiente; esta tienda aún no procesa pagos.</small></form>}</>}
+        {cartItems.length > 0 && <><div className="drawer-total"><span>Total del pedido</span><strong>{formatCurrency(total)}</strong></div>{demo ? <button className="button-primary" type="button" disabled>Conecta Supabase para comprar</button> : <form className="checkout-form" onSubmit={submitOrder}><h3>¿A quién preparamos el pedido?</h3><label className="form-control">Nombre completo<input name="fullName" autoComplete="name" required maxLength={120} onChange={resetIdempotencyKey} /></label><label className="form-control">Correo electrónico<input name="email" type="email" autoComplete="email" required maxLength={254} onChange={resetIdempotencyKey} /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="button-primary" type="submit" disabled={submitting}>{submitting ? "Registrando pedido..." : "Crear pedido"} <ArrowRight size={15} /></button><small>El pedido quedará pendiente; esta tienda aún no procesa pagos.</small></form>}</>}
       </>}
     </aside></>}
   </>;
