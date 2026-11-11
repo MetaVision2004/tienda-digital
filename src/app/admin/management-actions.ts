@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { requireStaff } from "@/lib/staff-auth";
+import { getSiteUrl } from "@/lib/site-url";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const categorySchema = z.object({
@@ -58,7 +59,6 @@ export async function deleteCategory(formData: FormData) {
 const staffCreateSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   email: z.email().max(254).transform((email) => email.toLowerCase()),
-  password: z.string().min(12).max(128),
   role: z.enum(["admin", "seller", "support"]),
 });
 
@@ -67,16 +67,15 @@ export async function createStaff(formData: FormData) {
   const parsed = staffCreateSchema.safeParse({
     fullName: formData.get("full_name"),
     email: formData.get("email"),
-    password: formData.get("password"),
     role: formData.get("role"),
   });
   if (!parsed.success) redirect("/admin?notice=invalid-staff");
 
   const admin = createAdminClient();
-  const { data: authData, error: authError } = await admin.auth.admin.createUser({
-    email: parsed.data.email,
-    password: parsed.data.password,
-    email_confirm: true,
+  const inviteUrl = new URL("/auth/callback?next=%2Fadmin%2Fpassword", getSiteUrl()).toString();
+  const { data: authData, error: authError } = await admin.auth.admin.inviteUserByEmail(parsed.data.email, {
+    redirectTo: inviteUrl,
+    data: { full_name: parsed.data.fullName },
   });
   if (authError || !authData.user) redirect("/admin?notice=staff-create-failed");
 
@@ -93,7 +92,7 @@ export async function createStaff(formData: FormData) {
   }
 
   revalidatePath("/admin");
-  redirect("/admin?notice=staff-created");
+  redirect("/admin?notice=staff-invited");
 }
 
 const staffUpdateSchema = z.object({

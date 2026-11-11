@@ -26,7 +26,9 @@ insert into public.user_roles (user_id, role_id)
 select 'AUTH_USER_UUID', id from public.roles where name = 'admin';
 ```
 
-Luego entra por `/admin/login`. `admin` gestiona personal; `admin` y `seller` gestionan productos, categorías y pedidos; `support` solo consulta pedidos. El panel crea usuarios de Auth con contraseña inicial y rol. No hay registro público de empleados.
+Luego entra por `/admin/login`. `admin` gestiona personal; `admin` y `seller` gestionan productos, categorías y pedidos; `support` solo consulta pedidos. El admin invita al personal desde el panel y cada persona confirma el correo y establece su propia contraseña. Los clientes sí pueden crear una cuenta pública en `/cuenta/registro`; no reciben roles internos y solo consultan pedidos asociados a su propio perfil.
+
+El acceso del equipo admite contraseña y magic link. Las cuentas de cliente admiten registro confirmado por correo, login con contraseña y recuperación. Los cambios de email y reautenticación requieren correo saliente configurado en Supabase. Añade `http://localhost:3000/auth/callback` y el dominio de producción con `/auth/callback` en **Authentication → URL Configuration → Redirect URLs**. Mantén activadas las plantillas de confirmación, invitación, magic link, recuperación y cambio de correo en **Authentication → Email Templates**. Los cambios de email usan la confirmación segura de Supabase para ambas direcciones.
 
 ## Flujo de tienda
 

@@ -11,6 +11,11 @@ const demoProducts: StoreProduct[] = [
   { id: "preview-03", category_id: 3, slug: "disena-tu-primera-web", name: "Diseña tu primera web", description: "Lecciones prácticas, del boceto a la publicación.", price: 54, compare_at_price: null, image_url: null, is_featured: false, is_new: false, product_type: "course" },
   { id: "preview-04", category_id: 4, slug: "licencia-studio", name: "Licencia Studio", description: "Herramientas para ordenar tu flujo creativo.", price: 24, compare_at_price: null, image_url: null, is_featured: false, is_new: false, product_type: "license" },
 ];
+const migrationHint = "Ejecuta en Supabase, en orden, las migraciones 20261103000000_add_product_catalog_metadata.sql y 20261109000000_scope_operations_and_checkout.sql.";
+
+function catalogError(message: string, code: string) {
+  return new Error(code === "42703" ? `${message} ${migrationHint}` : message);
+}
 
 export async function getStorefrontData() {
   const companyId = process.env.STORE_COMPANY_ID;
@@ -22,8 +27,8 @@ export async function getStorefrontData() {
     supabase.from("products").select("id,category_id,slug,name,description,price,compare_at_price,image_url,is_featured,is_new,product_type").eq("company_id", companyId).eq("is_active", true).order("is_featured", { ascending: false }).order("is_new", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("categories").select("id,name").eq("company_id", companyId).order("name"),
   ]);
-  if (productResult.error) throw new Error("No fue posible cargar el catálogo.");
-  if (categoryResult.error) throw new Error("No fue posible cargar las categorías.");
+  if (productResult.error) throw catalogError("No fue posible cargar el catálogo.", productResult.error.code);
+  if (categoryResult.error) throw catalogError("No fue posible cargar las categorías.", categoryResult.error.code);
 
   return {
     products: (productResult.data ?? []).map((product) => ({ ...product, price: Number(product.price), compare_at_price: product.compare_at_price === null ? null : Number(product.compare_at_price) })) as StoreProduct[],
@@ -44,7 +49,7 @@ export async function getProductBySlug(slug: string) {
     .eq("slug", slug)
     .eq("is_active", true)
     .maybeSingle();
-  if (error) throw new Error("No fue posible cargar el producto.");
+  if (error) throw catalogError("No fue posible cargar el producto.", error.code);
   if (!data) return null;
   return { ...data, price: Number(data.price), compare_at_price: data.compare_at_price === null ? null : Number(data.compare_at_price) } as StoreProduct;
 }

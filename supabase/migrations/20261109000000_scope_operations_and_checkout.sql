@@ -9,6 +9,9 @@ alter table public.orders
   add column if not exists checkout_request_key uuid,
   add column if not exists checkout_request_hash text;
 
+alter table public.customers
+  add column if not exists auth_user_id uuid references auth.users(id) on delete set null;
+
 do $$
 begin
   if exists (
@@ -72,6 +75,9 @@ create unique index if not exists categories_company_name_unique_idx
   on public.categories (company_id, lower(name));
 create unique index if not exists customers_company_email_unique_idx
   on public.customers (company_id, email);
+create unique index if not exists customers_company_auth_user_unique_idx
+  on public.customers (company_id, auth_user_id)
+  where auth_user_id is not null;
 create index if not exists orders_company_created_at_idx
   on public.orders (company_id, created_at desc);
 create unique index if not exists orders_company_checkout_request_key_idx

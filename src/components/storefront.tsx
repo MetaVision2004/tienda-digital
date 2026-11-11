@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowRight, Check, ChevronRight, CircleHelp, Layers3, Minus, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, X } from "lucide-react";
+import { ArrowDownRight, ArrowRight, Check, ChevronRight, CircleHelp, Layers3, Minus, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, UserRound, X } from "lucide-react";
 import { categoryLabel, formatCurrency, safeImageUrl, type StoreCategory, type StoreProduct } from "@/lib/catalog-model";
 import { changeCartItem, clearCart, useCart } from "@/lib/cart-storage";
 
@@ -73,8 +73,8 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
   return <>
     <header className="site-header">
       <a className="brand" href="#inicio" aria-label="Marea Digital, inicio"><span className="brand-mark"><Layers3 size={17} strokeWidth={2.2} /></span><span>marea<small>archivo digital</small></span></a>
-      <nav className="header-nav" aria-label="Navegación principal"><a href="#catalogo">Explorar</a><a href="#beneficios">La tienda</a><a href="/admin/login">Acceso equipo</a></nav>
-      <div className="header-actions"><button className="icon-button" type="button" aria-label={`Abrir carrito, ${cartCount} productos`} onClick={() => { setOrder(null); setCartOpen(true); }}><ShoppingBag size={17} /><span className="cart-count">{cartCount}</span></button></div>
+      <nav className="header-nav" aria-label="Navegación principal"><a href="#catalogo">Explorar</a><a href="#beneficios">La tienda</a></nav>
+      <div className="header-actions"><div className="header-account"><Link className="icon-button account-avatar" href="/cuenta/login" aria-label="Iniciar sesión" title="Iniciar sesión"><UserRound size={17} /></Link><Link className="header-login-link" href="/cuenta/login">Iniciar sesión</Link><Link className="button-primary header-register-link" href="/cuenta/registro">Registrarse</Link></div><button className="icon-button" type="button" aria-label={`Abrir carrito, ${cartCount} productos`} onClick={() => { setOrder(null); setCartOpen(true); }}><ShoppingBag size={17} /><span className="cart-count">{cartCount}</span></button></div>
     </header>
 
     <main id="inicio">
@@ -102,7 +102,7 @@ export default function Storefront({ products, categories, demo }: StorefrontPro
       </section>
     </main>
 
-    <footer className="site-footer"><a className="brand" href="#inicio"><span className="brand-mark"><Layers3 size={16} /></span><span>marea<small>archivo digital</small></span></a><span>Recursos para hacer que las ideas sucedan.</span><div className="footer-links"><a href="/admin/login">Equipo</a><a href="#inicio">Volver arriba <ChevronRight size={13} /></a></div></footer>
+    <footer className="site-footer"><a className="brand" href="#inicio"><span className="brand-mark"><Layers3 size={16} /></span><span>marea<small>archivo digital</small></span></a><span>Recursos para hacer que las ideas sucedan.</span><div className="footer-links"><a href="/cuenta/login">Mi cuenta</a><a href="/admin/login">Equipo</a><a href="#inicio">Volver arriba <ChevronRight size={13} /></a></div></footer>
 
     {cartOpen && <><button className="drawer-backdrop" type="button" aria-label="Cerrar carrito" onClick={() => setCartOpen(false)} /><aside className="cart-drawer" aria-label="Carrito de compras">
       <div className="drawer-heading"><h2>{order ? "Pedido recibido" : "Tu selección"}</h2><button className="icon-button" type="button" aria-label="Cerrar" onClick={() => setCartOpen(false)}><X size={17} /></button></div>
